@@ -1,10 +1,10 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>CreatorX Coin</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
 *{box-sizing:border-box}
 body{
@@ -18,6 +18,8 @@ header{
 .logo{font-size:22px;font-weight:900}
 .logo span{color:#e52b32}
 .tag{color:#d6ad58;font-size:11px;letter-spacing:2px}
+.user-badge{text-align:right;font-size:12px;color:#aaa}
+.user-badge b{color:#e8bb61;display:block;font-size:14px}
 main{max-width:480px;margin:auto;padding:20px}
 .balance{
  background:linear-gradient(135deg,#251010,#111);
@@ -36,6 +38,7 @@ main{max-width:480px;margin:auto;padding:20px}
  box-shadow:0 0 25px #bd762b66,inset 0 0 18px #fff5;
  cursor:pointer;user-select:none;
  transition:transform .09s;
+ -webkit-tap-highlight-color:transparent;
 }
 .coin:active{transform:scale(.93)}
 .coin span{font-size:82px;font-weight:1000;color:#a20f19;
@@ -91,7 +94,10 @@ h2{color:#efc36c}
   <div class="logo">CREATOR<span>X</span> COIN</div>
   <div class="tag">TAP • EARN • GROW</div>
  </div>
- <div style="color:#e8bb61;font-weight:bold">CXC</div>
+ <div class="user-badge">
+  <b>CXC</b>
+  <span id="userLabel">Connecting...</span>
+ </div>
 </header>
 
 <main>
@@ -99,7 +105,7 @@ h2{color:#efc36c}
  <div class="balance">
   <div class="small">YOUR CXC GAME POINTS</div>
   <div class="amount" id="balance">0</div>
-  <div class="small">CreatorX Coin · Demo points</div>
+  <div class="small" id="syncStatus">CreatorX Coin · Cloud Sync</div>
  </div>
  <div class="coin-area">
   <div class="tap-label">TAP TO <span>EARN</span></div>
@@ -124,7 +130,7 @@ h2{color:#efc36c}
  <h2>🎯 Daily Tasks</h2>
  <div class="item"><div>Daily login<br><small>Open CreatorX today</small></div><button onclick="claimTask('login',100)">Claim +100</button></div>
  <div class="item"><div>Tap challenge<br><small>Complete 50 taps</small></div><button onclick="claimTask('taps',50)">Claim +50</button></div>
- <p class="notice">Demo tasks only. Rewards are game points, not withdrawable cryptocurrency.</p>
+ <p class="notice">Rewards are game points saved to your CreatorX cloud account.</p>
 </section>
 
 <section class="page" id="friends">
@@ -140,7 +146,7 @@ h2{color:#efc36c}
 <section class="page" id="wallet">
  <h2>👛 My Wallet</h2>
  <div class="balance">
-  <div class="small">YOUR DEMO POINT BALANCE</div>
+  <div class="small">YOUR CXC POINT BALANCE</div>
   <div class="amount" id="walletBalance">0</div>
   <div class="small">CXC game points</div>
  </div>
@@ -157,54 +163,147 @@ h2{color:#efc36c}
  <button onclick="showPage('wallet',this)">👛<br>Wallet</button>
 </nav>
 
-<script>
-let balance=Number(localStorage.getItem('cxcBalance')||0);
-let energy=Number(localStorage.getItem('cxcEnergy')||1000);
-let taps=Number(localStorage.getItem('cxcTaps')||0);
-let claimed=localStorage.getItem('cxcDaily')||'';
-let tasks=JSON.parse(localStorage.getItem('cxcTasks')||'{}');
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getDatabase, ref, get, set } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
-function save(){
- localStorage.setItem('cxcBalance',balance);
- localStorage.setItem('cxcEnergy',energy);
- localStorage.setItem('cxcTaps',taps);
+const firebaseConfig = {
+  apiKey: "AIzaSyAqR51VAwniDim1fEHUI1XAj65UvtwaVRc",
+  authDomain: "creatorx-coin.firebaseapp.com",
+  databaseURL: "https://creatorx-coin-default-rtdb.firebaseio.com",
+  projectId: "creatorx-coin",
+  storageBucket: "creatorx-coin.firebasestorage.app",
+  messagingSenderId: "1023093336278",
+  appId: "1:1023093336278:web:b5befece6ffd8306090177"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+// Telegram WebApp setup
+const tg = window.Telegram && window.Telegram.WebApp;
+let userId = "guest_demo";
+let userName = "Guest";
+
+if (tg) {
+  tg.ready();
+  tg.expand();
+  if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
+    userId = String(tg.initDataUnsafe.user.id);
+    userName = tg.initDataUnsafe.user.first_name || tg.initDataUnsafe.user.username || "Miner";
+  }
 }
-function render(){
- document.getElementById('balance').textContent=balance.toLocaleString();
- document.getElementById('walletBalance').textContent=balance.toLocaleString();
- document.getElementById('taps').textContent=taps;
- document.getElementById('energyText').textContent=energy+' / 1000';
- document.getElementById('energyFill').style.width=(energy/10)+'%';
+
+document.getElementById('userLabel').textContent = userName;
+
+let balance = Number(localStorage.getItem('cxcBalance_' + userId) || 0);
+let energy = Number(localStorage.getItem('cxcEnergy_' + userId) || 1000);
+let taps = Number(localStorage.getItem('cxcTaps_' + userId) || 0);
+let claimed = localStorage.getItem('cxcDaily_' + userId) || '';
+let tasks = JSON.parse(localStorage.getItem('cxcTasks_' + userId) || '{}');
+let cloudLoaded = false;
+let syncTimer = null;
+
+const userRef = ref(db, 'users/' + userId);
+
+function syncToCloud() {
+  if (!cloudLoaded) return;
+  document.getElementById('syncStatus').textContent = 'Saving to cloud...';
+  set(userRef, {
+    name: userName,
+    balance: balance,
+    energy: energy,
+    taps: taps,
+    claimed: claimed,
+    tasks: tasks,
+    lastUpdated: Date.now()
+  }).then(() => {
+    document.getElementById('syncStatus').textContent = 'CreatorX Coin · Cloud Saved ☁️';
+  }).catch(() => {
+    document.getElementById('syncStatus').textContent = 'Offline mode (saved locally)';
+  });
 }
-document.getElementById('coin').addEventListener('click',()=>{
- if(energy<=0){alert('Energy finished! Wait for it to recharge.');return}
- balance++;taps++;energy--;
- save();render();
+
+function save(immediateCloud = false) {
+  localStorage.setItem('cxcBalance_' + userId, balance);
+  localStorage.setItem('cxcEnergy_' + userId, energy);
+  localStorage.setItem('cxcTaps_' + userId, taps);
+  localStorage.setItem('cxcDaily_' + userId, claimed);
+  localStorage.setItem('cxcTasks_' + userId, JSON.stringify(tasks));
+
+  if (immediateCloud) {
+    clearTimeout(syncTimer);
+    syncToCloud();
+  } else {
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(syncToCloud, 1000);
+  }
+}
+
+function render() {
+  document.getElementById('balance').textContent = balance.toLocaleString();
+  document.getElementById('walletBalance').textContent = balance.toLocaleString();
+  document.getElementById('taps').textContent = taps;
+  document.getElementById('energyText').textContent = energy + ' / 1000';
+  document.getElementById('energyFill').style.width = (energy / 10) + '%';
+}
+
+// Load data from Firebase on startup
+get(userRef).then((snapshot) => {
+  if (snapshot.exists()) {
+    const data = snapshot.val();
+    balance = Math.max(balance, Number(data.balance || 0));
+    taps = Math.max(taps, Number(data.taps || 0));
+    energy = data.energy !== undefined ? Number(data.energy) : energy;
+    claimed = data.claimed || claimed;
+    tasks = data.tasks || tasks;
+  }
+  cloudLoaded = true;
+  save(true);
+  render();
+}).catch(() => {
+  cloudLoaded = true;
+  document.getElementById('syncStatus').textContent = 'CreatorX Coin · Local Mode';
 });
-function daily(){
- let today=new Date().toDateString();
- if(claimed===today){alert('Daily reward already claimed!');return}
- balance+=100;claimed=today;
- localStorage.setItem('cxcDaily',claimed);
- save();render();alert('100 demo points added!');
-}
-function claimTask(id,reward){
- if(tasks[id]){alert('Already claimed!');return}
- if(id==='taps' && taps<50){alert('Complete 50 taps first!');return}
- tasks[id]=true;
- localStorage.setItem('cxcTasks',JSON.stringify(tasks));
- balance+=reward;save();render();
- alert(reward+' demo points added!');
-}
-function showPage(id,btn){
- document.querySelectorAll('section.page').forEach(p=>p.classList.remove('active'));
- document.getElementById(id).classList.add('active');
- document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));
- btn.classList.add('active');render();
-}
-setInterval(()=>{
- if(energy<1000){energy=Math.min(1000,energy+1);save();render()}
-},3000);
+
+document.getElementById('coin').addEventListener('click', () => {
+  if (energy <= 0) { alert('Energy finished! Wait for it to recharge.'); return; }
+  balance++; taps++; energy--;
+  if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+  save(false);
+  render();
+});
+
+window.daily = function() {
+  let today = new Date().toDateString();
+  if (claimed === today) { alert('Daily reward already claimed!'); return; }
+  balance += 100; claimed = today;
+  save(true); render(); alert('100 CXC points added & saved to cloud!');
+};
+
+window.claimTask = function(id, reward) {
+  if (tasks[id]) { alert('Already claimed!'); return; }
+  if (id === 'taps' && taps < 50) { alert('Complete 50 taps first!'); return; }
+  tasks[id] = true;
+  balance += reward; save(true); render();
+  alert(reward + ' CXC points added & saved to cloud!');
+};
+
+window.showPage = function(id, btn) {
+  document.querySelectorAll('section.page').forEach(p => p.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active'); render();
+};
+
+setInterval(() => {
+  if (energy < 1000) {
+    energy = Math.min(1000, energy + 1);
+    localStorage.setItem('cxcEnergy_' + userId, energy);
+    render();
+  }
+}, 3000);
+
 render();
 </script>
 </body>
