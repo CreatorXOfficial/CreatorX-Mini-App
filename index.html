@@ -63,7 +63,11 @@ button{
  background:#bd202c;color:white;font-weight:bold;
  font-size:15px;cursor:pointer;
 }
-.full{width:100%;margin-top:14px}
+.btn-secondary{
+ background:#251c1c;border:1px solid #49302b;color:#f4c76b;
+}
+.full{width:100%;margin-top:12px}
+.btn-row{display:grid;grid-template-columns:2fr 1fr;gap:10px;margin-top:14px}
 section.page{display:none}
 section.page.active{display:block}
 .item{
@@ -73,6 +77,11 @@ section.page.active{display:block}
 }
 .item small{color:#aaa}
 .item button{padding:10px 14px}
+.ref-box{
+ background:#141010;border:1px dashed #71302b;
+ padding:10px;border-radius:10px;font-size:12px;
+ color:#e8bb61;word-break:break-all;margin-top:12px;
+}
 nav{
  position:fixed;bottom:0;left:0;right:0;
  display:flex;justify-content:space-around;
@@ -134,13 +143,24 @@ h2{color:#efc36c}
 </section>
 
 <section class="page" id="friends">
- <h2>👥 Friends</h2>
- <div class="stat">
-  <span class="small">Invite your friends</span>
-  <b>Grow together!</b>
-  <p class="small">Referral rewards will be connected in a future version.</p>
+ <h2>👥 Invite Friends</h2>
+ <div class="stats" style="margin-bottom:14px">
+  <div class="stat"><span class="small">Friends Invited</span><b id="refCount">0</b></div>
+  <div class="stat"><span class="small">Referral Bonus</span><b>+500 CXC</b></div>
  </div>
- <button class="full" onclick="alert('Referral system coming soon!')">Invite Friends</button>
+ <div class="stat">
+  <span class="small">How it works</span>
+  <b style="font-size:15px">You get +500 CXC & Friend gets +250 CXC!</b>
+  <div class="ref-box" id="refLinkText">Loading your invite link...</div>
+ </div>
+ <div class="btn-row">
+  <button onclick="shareInvite()">📤 Invite Friends</button>
+  <button class="btn-secondary" onclick="copyInvite()">📋 Copy</button>
+ </div>
+ <h3 style="color:#efc36c;margin-top:22px;font-size:16px">Your Invited Friends</h3>
+ <div id="friendsList">
+  <p class="small">No friends invited yet. Share your link to earn bonus CXC!</p>
+ </div>
 </section>
 
 <section class="page" id="wallet">
@@ -165,7 +185,7 @@ h2{color:#efc36c}
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getDatabase, ref, get, set } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+import { getDatabase, ref, get, set, update, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAqR51VAwniDim1fEHUI1XAj65UvtwaVRc",
@@ -184,23 +204,33 @@ const db = getDatabase(app);
 const tg = window.Telegram && window.Telegram.WebApp;
 let userId = "guest_demo";
 let userName = "Guest";
+let startParam = "";
 
 if (tg) {
   tg.ready();
   tg.expand();
-  if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
-    userId = String(tg.initDataUnsafe.user.id);
-    userName = tg.initDataUnsafe.user.first_name || tg.initDataUnsafe.user.username || "Miner";
+  if (tg.initDataUnsafe) {
+    if (tg.initDataUnsafe.user) {
+      userId = String(tg.initDataUnsafe.user.id);
+      userName = tg.initDataUnsafe.user.first_name || tg.initDataUnsafe.user.username || "Miner";
+    }
+    if (tg.initDataUnsafe.start_param) {
+      startParam = String(tg.initDataUnsafe.start_param);
+    }
   }
 }
 
 document.getElementById('userLabel').textContent = userName;
+const inviteLink = `https://t.me/CreatorXminingbot/play?startapp=${userId}`;
+document.getElementById('refLinkText').textContent = inviteLink;
 
 let balance = Number(localStorage.getItem('cxcBalance_' + userId) || 0);
 let energy = Number(localStorage.getItem('cxcEnergy_' + userId) || 1000);
 let taps = Number(localStorage.getItem('cxcTaps_' + userId) || 0);
 let claimed = localStorage.getItem('cxcDaily_' + userId) || '';
 let tasks = JSON.parse(localStorage.getItem('cxcTasks_' + userId) || '{}');
+let invitedBy = "";
+let referrals = {};
 let cloudLoaded = false;
 let syncTimer = null;
 
@@ -209,7 +239,7 @@ const userRef = ref(db, 'users/' + userId);
 function syncToCloud() {
   if (!cloudLoaded) return;
   document.getElementById('syncStatus').textContent = 'Saving to cloud...';
-  set(userRef, {
+  update(userRef, {
     name: userName,
     balance: balance,
     energy: energy,
@@ -240,31 +270,91 @@ function save(immediateCloud = false) {
   }
 }
 
+function renderFriends() {
+  const keys = Object.keys(referrals || {});
+  document.getElementById('refCount').textContent = keys.length;
+  const listEl = document.getElementById('friendsList');
+  if (keys.length === 0) {
+    listEl.innerHTML = '<p class="small">No friends invited yet. Share your link to earn bonus CXC!</p>';
+    return;
+  }
+  listEl.innerHTML = keys.map(k => {
+    const f = referrals[k];
+    return `<div class="item"><div><b>${f.name || 'Miner'}</b><br><small>Joined via your link</small></div><span style="color:#e9bd64;font-weight:bold">+500 CXC</span></div>`;
+  }).join('');
+}
+
 function render() {
   document.getElementById('balance').textContent = balance.toLocaleString();
   document.getElementById('walletBalance').textContent = balance.toLocaleString();
   document.getElementById('taps').textContent = taps;
   document.getElementById('energyText').textContent = energy + ' / 1000';
   document.getElementById('energyFill').style.width = (energy / 10) + '%';
+  renderFriends();
+}
+
+// Process referral reward if new user joined via startapp link
+async function handleReferral(isNewUser) {
+  if (!isNewUser || !startParam || startParam === userId || userId === "guest_demo") return;
+  try {
+    const inviterRef = ref(db, 'users/' + startParam);
+    const inviterSnap = await get(inviterRef);
+    if (inviterSnap.exists()) {
+      invitedBy = startParam;
+      balance += 250; // Welcome bonus for new user
+      await update(userRef, { invitedBy: startParam, balance: balance });
+      await runTransaction(ref(db, 'users/' + startParam + '/balance'), (curr) => (curr || 0) + 500);
+      await set(ref(db, 'users/' + startParam + '/referrals/' + userId), {
+        name: userName,
+        joinedAt: Date.now()
+      });
+      alert('🎉 Welcome! You received +250 CXC referral bonus!');
+    }
+  } catch (e) {
+    console.error(e);
+  }
 }
 
 // Load data from Firebase on startup
-get(userRef).then((snapshot) => {
-  if (snapshot.exists()) {
+get(userRef).then(async (snapshot) => {
+  const isNewUser = !snapshot.exists();
+  if (!isNewUser) {
     const data = snapshot.val();
     balance = Math.max(balance, Number(data.balance || 0));
     taps = Math.max(taps, Number(data.taps || 0));
     energy = data.energy !== undefined ? Number(data.energy) : energy;
     claimed = data.claimed || claimed;
     tasks = data.tasks || tasks;
+    invitedBy = data.invitedBy || "";
+    referrals = data.referrals || {};
   }
   cloudLoaded = true;
+  await handleReferral(isNewUser);
   save(true);
   render();
 }).catch(() => {
   cloudLoaded = true;
   document.getElementById('syncStatus').textContent = 'CreatorX Coin · Local Mode';
 });
+
+window.shareInvite = function() {
+  const text = encodeURIComponent("🚀 Join CreatorX Coin & mine CXC points with me! Get +250 CXC welcome bonus:");
+  const url = encodeURIComponent(inviteLink);
+  const shareUrl = `https://t.me/share/url?url=${url}&text=${text}`;
+  if (tg && tg.openTelegramLink) {
+    tg.openTelegramLink(shareUrl);
+  } else {
+    window.open(shareUrl, '_blank');
+  }
+};
+
+window.copyInvite = function() {
+  navigator.clipboard.writeText(inviteLink).then(() => {
+    alert('✅ Invite link copied! Share it with your friends.');
+  }).catch(() => {
+    alert('Link: ' + inviteLink);
+  });
+};
 
 document.getElementById('coin').addEventListener('click', () => {
   if (energy <= 0) { alert('Energy finished! Wait for it to recharge.'); return; }
@@ -293,7 +383,13 @@ window.showPage = function(id, btn) {
   document.querySelectorAll('section.page').forEach(p => p.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active'); render();
+  btn.classList.add('active');
+  if (id === 'friends' && cloudLoaded) {
+    get(ref(db, 'users/' + userId + '/referrals')).then((snap) => {
+      if (snap.exists()) { referrals = snap.val(); renderFriends(); }
+    });
+  }
+  render();
 };
 
 setInterval(() => {
